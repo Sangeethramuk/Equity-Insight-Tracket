@@ -1,0 +1,5 @@
+{
+  "name": "EquityInsight Tracker",
+  "description": "A sophisticated stock purchase log and analysis tool that tracks PE, PB, and EPS metrics over time, providing automated averaging and AI-powered portfolio insights.",
+  "requestFramePermissions": []
+}
