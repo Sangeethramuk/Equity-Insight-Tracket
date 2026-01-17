@@ -19,7 +19,6 @@ export const getPortfolioAnalysis = async (summaries: StockSummary[]): Promise<{
   });
 
   const prompt = `Analyze this stock purchase portfolio performance and valuation: ${JSON.stringify(portfolioData)}. 
-  The user has tracked these metrics at the time of purchase and current market prices. 
   Provide a professional summary of the portfolio's valuation versus performance. 
   Is the user buying at good valuations? Provide one key piece of strategic advice.`;
 
@@ -32,16 +31,15 @@ export const getPortfolioAnalysis = async (summaries: StockSummary[]): Promise<{
         responseSchema: {
           type: Type.OBJECT,
           properties: {
-            summary: { type: Type.STRING, description: "A summary of the current portfolio metrics and performance" },
-            advice: { type: Type.STRING, description: "Actionable strategy advice" }
+            summary: { type: Type.STRING },
+            advice: { type: Type.STRING }
           },
           required: ["summary", "advice"]
         }
       }
     });
 
-    const result = JSON.parse(response.text || '{"summary": "No analysis available.", "advice": "Please add more stocks."}');
-    return result;
+    return JSON.parse(response.text || '{"summary": "No analysis available.", "advice": "Please add more stocks."}');
   } catch (error) {
     console.error("AI Analysis failed:", error);
     return {
@@ -61,53 +59,51 @@ export interface MarketData {
 export const fetchMarketPrices = async (tickers: string[]): Promise<{ data: Record<string, MarketData>, sources: {title: string, uri: string}[] }> => {
   if (tickers.length === 0) return { data: {}, sources: [] };
 
-  const prompt = `Find the current real-time market data for these Indian stock symbols (NSE/BSE): ${tickers.join(', ')}. 
-  For each ticker, find:
-  1. Current Price
-  2. TTM P/E Ratio
-  3. P/B Ratio
-  4. Current EPS
+  const prompt = `Search for the latest, real-time market data for these Indian stock symbols (NSE/BSE): ${tickers.join(', ')}.
+  Return ONLY a JSON object where keys are the ticker names and values are objects containing:
+  - price: current trading price (number)
+  - pe: TTM P/E ratio (number)
+  - pb: P/B ratio (number)
+  - eps: TTM EPS (number)
   
-  Format the response clearly as TICKER: PRICE, PE: val, PB: val, EPS: val.`;
+  Ensure the data is the most recent available. Do not include currency symbols or commas in numbers.`;
 
   try {
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
       contents: prompt,
       config: {
-        tools: [{ googleSearch: {} }]
+        tools: [{ googleSearch: {} }],
+        responseMimeType: "application/json",
+        responseSchema: {
+          type: Type.OBJECT,
+          description: "Market data keyed by ticker",
+          properties: tickers.reduce((acc, ticker) => {
+            acc[ticker] = {
+              type: Type.OBJECT,
+              properties: {
+                price: { type: Type.NUMBER },
+                pe: { type: Type.NUMBER },
+                pb: { type: Type.NUMBER },
+                eps: { type: Type.NUMBER }
+              },
+              required: ["price"]
+            };
+            return acc;
+          }, {} as any)
+        }
       }
     });
 
-    const text = response.text || "";
     const sources = response.candidates?.[0]?.groundingMetadata?.groundingChunks
       ?.map((chunk: any) => chunk.web)
       .filter(Boolean) || [];
 
+    const rawData = JSON.parse(response.text || "{}");
+    // Normalize keys to uppercase to match our application state
     const data: Record<string, MarketData> = {};
-    
-    tickers.forEach(ticker => {
-      const entry: MarketData = { price: 0 };
-      
-      // Extract price
-      const priceMatch = text.match(new RegExp(`${ticker}\\D*?(\\d[\\d,.]+)`, 'i'));
-      if (priceMatch) entry.price = parseFloat(priceMatch[1].replace(/,/g, ''));
-
-      // Extract PE
-      const peMatch = text.match(new RegExp(`${ticker}.*?PE:?\\s*(\\d[\\d,.]+)`, 'i')) || text.match(new RegExp(`PE.*?${ticker}.*?(\\d[\\d,.]+)`, 'i'));
-      if (peMatch) entry.pe = parseFloat(peMatch[1]);
-
-      // Extract PB
-      const pbMatch = text.match(new RegExp(`${ticker}.*?PB:?\\s*(\\d[\\d,.]+)`, 'i')) || text.match(new RegExp(`PB.*?${ticker}.*?(\\d[\\d,.]+)`, 'i'));
-      if (pbMatch) entry.pb = parseFloat(pbMatch[1]);
-
-      // Extract EPS
-      const epsMatch = text.match(new RegExp(`${ticker}.*?EPS:?\\s*(\\d[\\d,.]+)`, 'i')) || text.match(new RegExp(`EPS.*?${ticker}.*?(\\d[\\d,.]+)`, 'i'));
-      if (epsMatch) entry.eps = parseFloat(epsMatch[1]);
-
-      if (entry.price > 0) {
-        data[ticker] = entry;
-      }
+    Object.keys(rawData).forEach(key => {
+      data[key.toUpperCase()] = rawData[key];
     });
 
     return { data, sources };

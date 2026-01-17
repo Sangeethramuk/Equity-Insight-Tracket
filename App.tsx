@@ -4,6 +4,7 @@ import StockForm from './components/StockForm';
 import SummaryCard from './components/SummaryCard';
 import AlertModal from './components/AlertModal';
 import EditPurchaseModal from './components/EditPurchaseModal';
+import KiteImport from './components/KiteImport';
 import RecommendationView from './components/RecommendationView';
 import { StockPurchase, StockSummary, AIAnalysis, StockAlert } from './types';
 import { getPortfolioAnalysis, fetchMarketPrices, MarketData } from './services/geminiService';
@@ -37,7 +38,7 @@ const App: React.FC = () => {
   const [aiAnalysis, setAiAnalysis] = useState<AIAnalysis | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isSyncing, setIsSyncing] = useState(false);
-  const [showGithubGuide, setShowGithubGuide] = useState(false);
+  const [marketSources, setMarketSources] = useState<{title: string, uri: string}[]>([]);
 
   useEffect(() => {
     localStorage.setItem('equity_purchases_v2', JSON.stringify(purchases));
@@ -57,6 +58,10 @@ const App: React.FC = () => {
     setTimeout(() => setActiveToast(null), 5000);
   };
 
+  const handleKiteImport = (newPurchases: StockPurchase[]) => {
+    setPurchases(prev => [...prev, ...newPurchases]);
+  };
+
   const handleSyncMarket = async () => {
     const tickers: string[] = Array.from(new Set(purchases.map(p => p.name.toUpperCase())));
     if (tickers.length === 0) return;
@@ -65,7 +70,7 @@ const App: React.FC = () => {
     showToast('Syncing with live market...', 'info');
     
     try {
-      const { data } = await fetchMarketPrices(tickers);
+      const { data, sources } = await fetchMarketPrices(tickers);
       if (Object.keys(data).length > 0) {
         const prices: Record<string, number> = {};
         const metrics: Record<string, Partial<MarketData>> = {};
@@ -77,7 +82,8 @@ const App: React.FC = () => {
 
         setCurrentPrices(prev => ({ ...prev, ...prices }));
         setCurrentMetrics(prev => ({ ...prev, ...metrics }));
-        showToast(`Updated market data for ${Object.keys(data).length} assets`, 'success');
+        setMarketSources(sources);
+        showToast(`Verified market data for ${Object.keys(data).length} tickers`, 'success');
       } else {
         showToast('No updated market data found', 'info');
       }
@@ -111,6 +117,9 @@ const App: React.FC = () => {
           triggered = true;
           const msg = `Alert: ${s.name} ${alert.type.replace('_', ' ').toLowerCase()} ${alert.threshold}`;
           showToast(msg, 'success');
+          if (Notification.permission === 'granted') {
+            new Notification('EquityInsight Alert', { body: msg });
+          }
         }
       });
     });
@@ -218,44 +227,6 @@ const App: React.FC = () => {
 
   return (
     <div className="min-h-screen bg-[#fcfcfd] text-slate-900 pb-20 selection:bg-indigo-100 relative">
-      {/* GitHub Guide Modal */}
-      {showGithubGuide && (
-        <div className="fixed inset-0 z-[400] bg-slate-900/80 backdrop-blur-md flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-lg rounded-[2.5rem] shadow-2xl p-8 animate-in fade-in zoom-in duration-200">
-            <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-black text-slate-900 italic uppercase">GitHub <span className="text-indigo-600">Push Guide</span></h2>
-              <button onClick={() => setShowGithubGuide(false)} className="p-2 hover:bg-slate-100 rounded-full">
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
-            </div>
-            <div className="space-y-4">
-              <p className="text-sm text-slate-600 font-medium">To push this app to your GitHub, run these commands in your local project folder:</p>
-              <div className="bg-slate-900 p-4 rounded-2xl font-mono text-xs text-indigo-300 space-y-2 overflow-x-auto">
-                <p>git init</p>
-                <p>git add .</p>
-                <p>git commit -m "Initial commit of EquityInsight"</p>
-                <p>git branch -M main</p>
-                <p className="text-white">git remote add origin https://github.com/YOUR_USERNAME/equity-insight.git</p>
-                <p>git push -u origin main</p>
-              </div>
-              <div className="p-4 bg-indigo-50 rounded-2xl border border-indigo-100">
-                <p className="text-xs text-indigo-700 leading-relaxed">
-                  <b>Pro Tip:</b> After pushing, go to your Repository Settings &gt; Pages and set the source to "main" to host the app for free on GitHub Pages!
-                </p>
-              </div>
-            </div>
-            <button 
-              onClick={() => setShowGithubGuide(false)}
-              className="w-full mt-8 py-4 bg-slate-900 text-white font-black rounded-2xl uppercase tracking-widest text-sm"
-            >
-              Ready to Push
-            </button>
-          </div>
-        </div>
-      )}
-
       {isSyncing && (
         <div className="fixed inset-0 z-[300] bg-white/60 backdrop-blur-md flex flex-col items-center justify-center">
           <div className="w-16 h-16 border-4 border-indigo-600 border-t-transparent rounded-full animate-spin mb-4"></div>
@@ -301,14 +272,8 @@ const App: React.FC = () => {
           </div>
           
           <div className="flex items-center gap-2">
-            <button 
-              onClick={() => setShowGithubGuide(true)}
-              className="p-2.5 bg-slate-50 text-slate-500 rounded-full hover:bg-slate-900 hover:text-white transition-all flex items-center gap-2"
-              title="Push to GitHub"
-            >
-              <svg className="h-5 w-5 fill-current" viewBox="0 0 24 24"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.43.372.823 1.102.823 2.222 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>
-            </button>
-
+            <KiteImport onImport={handleKiteImport} onToast={showToast} />
+            
             <button 
               onClick={handleSyncMarket}
               disabled={isSyncing || purchases.length === 0}
@@ -390,7 +355,9 @@ const App: React.FC = () => {
                 <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-sm overflow-hidden">
                   <div className="px-8 py-6 border-b border-slate-100 bg-slate-50/50 flex justify-between items-center">
                     <h3 className="font-bold text-slate-800 uppercase tracking-widest text-[11px]">Audit Ledger</h3>
-                    <span className="text-[10px] font-bold text-indigo-500">{purchases.length} Records</span>
+                    <div className="flex items-center gap-4">
+                       <span className="text-[10px] font-bold text-indigo-500">{purchases.length} Records</span>
+                    </div>
                   </div>
                   <div className="overflow-x-auto">
                     <table className="w-full">
@@ -407,7 +374,7 @@ const App: React.FC = () => {
                             <tr key={p.id} className="hover:bg-slate-50/50 transition-all">
                               <td className="px-8 py-5"><p className="font-bold text-slate-900">{p.name}</p><p className="text-[10px] text-slate-400 font-medium">{p.purchaseDate}</p></td>
                               <td className="px-8 py-5"><span className="font-bold text-slate-800">₹{p.price.toLocaleString()}</span><span className="text-[10px] text-slate-400 ml-2">x {p.quantity}</span></td>
-                              <td className="px-8 py-5"><span className="text-xs font-black text-indigo-600">PE: {p.pe.toFixed(1)}</span></td>
+                              <td className="px-8 py-5"><span className="text-xs font-black text-indigo-600">PE: {p.pe > 0 ? p.pe.toFixed(1) : '—'}</span></td>
                               <td className="px-8 py-5 text-right flex justify-end gap-2">
                                 <button onClick={() => setEditingPurchase(p)} className="text-slate-300 hover:text-indigo-600 p-2 transition-colors" title="Edit Record">
                                   <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -454,7 +421,7 @@ const App: React.FC = () => {
       </main>
 
       <footer className="fixed bottom-0 left-0 right-0 bg-white/90 backdrop-blur-xl border-t border-slate-100 p-4 text-center text-[9px] font-black text-slate-400 uppercase tracking-[0.3em] z-50">
-        Live Market Sync Enabled &bull; Buy/Sell Recommendations Active &bull; v4.9
+        Live Market Sync Enabled &bull; Kite Import Active &bull; v4.9
       </footer>
     </div>
   );
